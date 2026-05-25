@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added TRMNL as a sleep-screen wallpaper source with configurable server, API key, device ID, and orientation.
 - Added an adjustable reader line-height setting with percent-based spacing for EPUB and TXT books.
 - Added nearby Reading Stats sync between CrossInk readers using direct ESP-NOW device-to-device messages.
 - Reading Stats now separates this device's totals from all-device totals when synced stats are available.

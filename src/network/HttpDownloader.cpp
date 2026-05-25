@@ -51,6 +51,14 @@ bool isCancelRequested(bool* cancelFlag, const HttpDownloader::CancelCallback& s
   return false;
 }
 
+void addHeaders(HTTPClient& http, const HttpDownloader::Header* headers, const size_t headerCount) {
+  for (size_t i = 0; i < headerCount; i++) {
+    if (headers[i].name && headers[i].value) {
+      http.addHeader(headers[i].name, headers[i].value);
+    }
+  }
+}
+
 class ProgressNotifier {
  public:
   ProgressNotifier(size_t total, HttpDownloader::ProgressCallback progress)
@@ -78,11 +86,12 @@ class ProgressNotifier {
 class FileWriteStream final : public Stream {
  public:
   FileWriteStream(FsFile& file, size_t total, HttpDownloader::ProgressCallback progress, bool* cancelFlag,
-                  HttpDownloader::CancelCallback shouldCancel)
+                  HttpDownloader::CancelCallback shouldCancel, const size_t maxBytes)
       : file_(file),
         progress_(total, std::move(progress)),
         cancelFlag_(cancelFlag),
-        shouldCancel_(std::move(shouldCancel)) {}
+        shouldCancel_(std::move(shouldCancel)),
+        maxBytes_(maxBytes) {}
 
   size_t write(uint8_t byte) override { return write(&byte, 1); }
 
@@ -92,6 +101,11 @@ class FileWriteStream final : public Stream {
     }
 
     if (isCancelRequested(cancelFlag_, shouldCancel_)) {
+      writeOk_ = false;
+      return 0;
+    }
+    if (maxBytes_ > 0 && downloaded_ + size > maxBytes_) {
+      sizeLimitExceeded_ = true;
       writeOk_ = false;
       return 0;
     }
@@ -111,15 +125,53 @@ class FileWriteStream final : public Stream {
 
   size_t downloaded() const { return downloaded_; }
   bool ok() const { return writeOk_; }
+  bool sizeLimitExceeded() const { return sizeLimitExceeded_; }
   void finishProgress() { progress_.notify(downloaded_, true); }
 
  private:
   FsFile& file_;
   size_t downloaded_ = 0;
   bool writeOk_ = true;
+  bool sizeLimitExceeded_ = false;
   ProgressNotifier progress_;
   bool* cancelFlag_;
   HttpDownloader::CancelCallback shouldCancel_;
+  size_t maxBytes_;
+};
+
+class LimitedWriteStream final : public Stream {
+ public:
+  LimitedWriteStream(Stream& out, const size_t maxBytes) : out_(out), maxBytes_(maxBytes) {}
+
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+
+  size_t write(const uint8_t* buffer, size_t size) override {
+    if (maxBytes_ > 0 && written_ + size > maxBytes_) {
+      sizeLimitExceeded_ = true;
+      return 0;
+    }
+    const size_t written = out_.write(buffer, size);
+    written_ += written;
+    if (written != size) {
+      writeOk_ = false;
+    }
+    return written;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override { out_.flush(); }
+
+  bool ok() const { return writeOk_; }
+  bool sizeLimitExceeded() const { return sizeLimitExceeded_; }
+
+ private:
+  Stream& out_;
+  size_t maxBytes_;
+  size_t written_ = 0;
+  bool writeOk_ = true;
+  bool sizeLimitExceeded_ = false;
 };
 
 HttpDownloader::DownloadError downloadKnownLengthBody(HTTPClient& http, FsFile& file, const size_t contentLength,
@@ -190,7 +242,8 @@ HttpDownloader::DownloadError downloadKnownLengthBody(HTTPClient& http, FsFile& 
 }  // namespace
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const Header* headers, const size_t headerCount,
+                              const size_t maxBytes) {
   WifiPowerSaveGuard wifiPowerSaveGuard;
   (void)wifiPowerSaveGuard;
 
@@ -222,6 +275,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   http.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
   http.setTimeout(HTTP_RESPONSE_TIMEOUT_MS);
   http.addHeader("User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  addHeaders(http, headers, headerCount);
 
   if (!username.empty() && !password.empty()) {
     std::string credentials = username + ":" + password;
@@ -236,11 +290,19 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
     return false;
   }
 
-  const int writeResult = http.writeToStream(&outContent);
+  const int64_t reportedLength = http.getSize();
+  if (maxBytes > 0 && reportedLength > static_cast<int64_t>(maxBytes)) {
+    LOG_ERR("HTTP", "Fetch too large: %lld > %zu", static_cast<long long>(reportedLength), maxBytes);
+    http.end();
+    return false;
+  }
+
+  LimitedWriteStream limitedStream(outContent, maxBytes);
+  const int writeResult = http.writeToStream(&limitedStream);
 
   http.end();
 
-  if (writeResult < 0) {
+  if (writeResult < 0 || !limitedStream.ok() || limitedStream.sizeLimitExceeded()) {
     LOG_ERR("HTTP", "writeToStream error: %d (%s)", writeResult, HTTPClient::errorToString(writeResult).c_str());
     return false;
   }
@@ -250,9 +312,10 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, const Header* headers, const size_t headerCount,
+                              const size_t maxBytes) {
   StreamString stream;
-  if (!fetchUrl(url, stream, username, password)) {
+  if (!fetchUrl(url, stream, username, password, headers, headerCount, maxBytes)) {
     return false;
   }
   outContent = stream.c_str();
@@ -260,9 +323,10 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
-                                                             ProgressCallback progress, bool* cancelFlag,
-                                                             const std::string& username, const std::string& password,
-                                                             DownloadOptions options) {
+                                                              ProgressCallback progress, bool* cancelFlag,
+                                                              const std::string& username, const std::string& password,
+                                                              DownloadOptions options, const Header* headers,
+                                                              const size_t headerCount) {
   WifiPowerSaveGuard wifiPowerSaveGuard;
   (void)wifiPowerSaveGuard;
 
@@ -299,6 +363,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   http.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
   http.setTimeout(HTTP_RESPONSE_TIMEOUT_MS);
   http.addHeader("User-Agent", "CrossInk-ESP32-" CROSSINK_VERSION);
+  addHeaders(http, headers, headerCount);
 
   size_t resumeOffset = 0;
   if (options.resumePartial && Storage.exists(destPath.c_str())) {
@@ -344,6 +409,11 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   const size_t contentLength = responseLength > 0 ? resumeOffset + responseLength : 0;
   if (contentLength > 0) {
     LOG_DBG("HTTP", "Content-Length: %zu", contentLength);
+    if (options.maxBytes > 0 && contentLength > options.maxBytes) {
+      LOG_ERR("HTTP", "Download too large: %zu > %zu", contentLength, options.maxBytes);
+      http.end();
+      return SIZE_LIMIT_EXCEEDED;
+    }
   } else {
     LOG_DBG("HTTP", "Content-Length: unknown");
   }
@@ -380,12 +450,15 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
                                             bufferSize, options.shouldCancel);
   } else {
     // Let HTTPClient handle chunked decoding and stream body bytes into the file.
-    FileWriteStream fileStream(file, contentLength, std::move(progress), cancelFlag, std::move(options.shouldCancel));
+    FileWriteStream fileStream(file, contentLength, std::move(progress), cancelFlag, std::move(options.shouldCancel),
+                               options.maxBytes);
     writeResult = http.writeToStream(&fileStream);
     fileStream.finishProgress();
     downloaded = fileStream.downloaded();
     if (cancelFlag && *cancelFlag) {
       transferError = ABORTED;
+    } else if (fileStream.sizeLimitExceeded()) {
+      transferError = SIZE_LIMIT_EXCEEDED;
     } else if (writeResult < 0) {
       transferError = HTTP_ERROR;
     } else if (!fileStream.ok()) {

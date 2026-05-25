@@ -231,10 +231,11 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
 
 inline SettingInfo buildSleepScreenSetting() {
   SettingInfo s = SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
-                                    {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                                     StrId::STR_NONE_OPT, StrId::STR_COVER_CUSTOM, StrId::STR_PAGE_OVERLAY,
-                                     StrId::STR_READING_STATS, StrId::STR_THEME_MINIMAL, StrId::STR_QUICK_RESUME},
-                                    "sleepScreen", StrId::STR_CAT_DISPLAY);
+                                     {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
+                                      StrId::STR_NONE_OPT, StrId::STR_COVER_CUSTOM, StrId::STR_PAGE_OVERLAY,
+                                      StrId::STR_READING_STATS, StrId::STR_THEME_MINIMAL, StrId::STR_QUICK_RESUME,
+                                      StrId::STR_TRMNL},
+                                     "sleepScreen", StrId::STR_CAT_DISPLAY);
   s.withEnumRawValues({
       static_cast<uint8_t>(CrossPointSettings::DARK),
       static_cast<uint8_t>(CrossPointSettings::LIGHT),
@@ -246,6 +247,7 @@ inline SettingInfo buildSleepScreenSetting() {
       static_cast<uint8_t>(CrossPointSettings::READING_STATS_SLEEP),
       static_cast<uint8_t>(CrossPointSettings::MINIMAL_SLEEP),
       static_cast<uint8_t>(CrossPointSettings::QUICK_RESUME),
+      static_cast<uint8_t>(CrossPointSettings::TRMNL),
   });
   return s;
 }
@@ -384,6 +386,16 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM));
     add(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
+    add(SettingInfo::String(StrId::STR_TRMNL_SERVER_URL, SETTINGS.trmnlServerUrl, sizeof(SETTINGS.trmnlServerUrl),
+                            "trmnlServerUrl", StrId::STR_TRMNL_SETTINGS));
+    add(SettingInfo::String(StrId::STR_TRMNL_API_KEY, SETTINGS.trmnlApiKey, sizeof(SETTINGS.trmnlApiKey),
+                            "trmnlApiKey", StrId::STR_TRMNL_SETTINGS)
+            .withObfuscated());
+    add(SettingInfo::String(StrId::STR_TRMNL_DEVICE_ID, SETTINGS.trmnlDeviceId, sizeof(SETTINGS.trmnlDeviceId),
+                            "trmnlDeviceId", StrId::STR_TRMNL_SETTINGS));
+    add(SettingInfo::Enum(StrId::STR_TRMNL_ORIENTATION, &CrossPointSettings::trmnlOrientation,
+                          {StrId::STR_TRMNL_HORIZONTAL, StrId::STR_TRMNL_VERTICAL}, "trmnlOrientation",
+                          StrId::STR_TRMNL_SETTINGS));
 
     // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
     add(SettingInfo::DynamicString(
