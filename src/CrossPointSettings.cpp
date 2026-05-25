@@ -43,6 +43,7 @@ constexpr uint8_t SLEEP_SCREEN_STORAGE_ORDER[] = {
     static_cast<uint8_t>(CrossPointSettings::READING_STATS_SLEEP),
     static_cast<uint8_t>(CrossPointSettings::MINIMAL_SLEEP),
     static_cast<uint8_t>(CrossPointSettings::QUICK_RESUME),
+    static_cast<uint8_t>(CrossPointSettings::TRMNL),
 };
 constexpr uint8_t SLEEP_SCREEN_STORAGE_ORDER_COUNT =
     sizeof(SLEEP_SCREEN_STORAGE_ORDER) / sizeof(SLEEP_SCREEN_STORAGE_ORDER[0]);

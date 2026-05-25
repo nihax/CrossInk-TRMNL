@@ -27,6 +27,7 @@
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
+#include "TrmnlSettingsActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -469,6 +470,9 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::KOReaderSync:
         startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::TrmnlSettings:
+        startActivityForResult(std::make_unique<TrmnlSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -635,6 +639,8 @@ void SettingsActivity::render(RenderLock&&) {
           valueText = settingEnumOptionLabel(setting, value);
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           valueText = formatSettingValue(setting);
+        } else if (setting.type == SettingType::ACTION && setting.action == SettingAction::TrmnlSettings) {
+          valueText = SETTINGS.trmnlServerUrl[0] == '\0' ? tr(STR_NOT_SET) : SETTINGS.trmnlServerUrl;
         }
         return valueText;
       },
