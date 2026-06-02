@@ -26,6 +26,8 @@ constexpr uint16_t HTTP_RESPONSE_TIMEOUT_MS = 15000;
 constexpr int32_t HTTP_CONNECT_TIMEOUT_MS = 10000;
 constexpr uint32_t HTTPS_HANDSHAKE_TIMEOUT_SECONDS = 10;
 constexpr uint32_t DOWNLOAD_IDLE_TIMEOUT_MS = 30000;
+int gLastHttpCode = 0;
+int gLastStreamError = 0;
 
 void logNetworkState(const char* phase) {
   LOG_DBG("HTTP", "%s: heap free=%u maxAlloc=%u wifi=%d rssi=%d", phase, ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
@@ -241,6 +243,9 @@ HttpDownloader::DownloadError downloadKnownLengthBody(HTTPClient& http, FsFile& 
 }
 }  // namespace
 
+int HttpDownloader::getLastHttpCode() { return gLastHttpCode; }
+int HttpDownloader::getLastStreamError() { return gLastStreamError; }
+
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password, const Header* headers, const size_t headerCount,
                               const size_t maxBytes) {
@@ -268,6 +273,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   HTTPClient http;
 
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
+  gLastHttpCode = 0;
+  gLastStreamError = 0;
 
   http.begin(*client, url.c_str());
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
@@ -284,6 +291,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   }
 
   const int httpCode = http.GET();
+  gLastHttpCode = httpCode;
   if (httpCode != HTTP_CODE_OK) {
     LOG_ERR("HTTP", "Fetch failed: %d", httpCode);
     http.end();
@@ -303,6 +311,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   http.end();
 
   if (writeResult < 0 || !limitedStream.ok() || limitedStream.sizeLimitExceeded()) {
+    gLastStreamError = writeResult;
     LOG_ERR("HTTP", "writeToStream error: %d (%s)", writeResult, HTTPClient::errorToString(writeResult).c_str());
     return false;
   }
@@ -352,6 +361,8 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   const size_t bufferSize = options.bufferSize > 0 ? options.bufferSize : DEFAULT_DOWNLOAD_BUFFER_SIZE;
 
   LOG_DBG("HTTP", "Downloading: %s", url.c_str());
+  gLastHttpCode = 0;
+  gLastStreamError = 0;
   LOG_DBG("HTTP", "Destination: %s", destPath.c_str());
   LOG_DBG("HTTP", "Timeouts: connect=%ld ms response=%u ms idle=%lu ms buffer=%zu bytes",
           static_cast<long>(HTTP_CONNECT_TIMEOUT_MS), HTTP_RESPONSE_TIMEOUT_MS,
@@ -387,6 +398,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   }
 
   const int httpCode = http.GET();
+  gLastHttpCode = httpCode;
   const bool isResumeResponse = resumeOffset > 0 && httpCode == 206;
   if (httpCode != HTTP_CODE_OK && !isResumeResponse) {
     if (httpCode < 0) {
@@ -460,6 +472,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     } else if (fileStream.sizeLimitExceeded()) {
       transferError = SIZE_LIMIT_EXCEEDED;
     } else if (writeResult < 0) {
+      gLastStreamError = writeResult;
       transferError = HTTP_ERROR;
     } else if (!fileStream.ok()) {
       LOG_ERR("HTTP", "Write failed during download");

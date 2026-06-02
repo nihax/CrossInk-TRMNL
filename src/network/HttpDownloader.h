@@ -63,4 +63,8 @@ class HttpDownloader {
                                       const std::string& username = "", const std::string& password = "",
                                       DownloadOptions options = DownloadOptions(), const Header* headers = nullptr,
                                       size_t headerCount = 0);
+
+  // Diagnostics from the most recent HTTP operation.
+  static int getLastHttpCode();
+  static int getLastStreamError();
 };

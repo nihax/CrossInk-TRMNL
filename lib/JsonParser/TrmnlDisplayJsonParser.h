@@ -7,6 +7,8 @@
 
 class TrmnlDisplayJsonParser {
  public:
+  static constexpr size_t kImageUrlMaxLen = 1536;
+
   TrmnlDisplayJsonParser();
   void reset();
   void feed(const char* data, size_t len);
@@ -33,7 +35,7 @@ class TrmnlDisplayJsonParser {
   StreamingJsonParser parser;
   LastKey lastKey = LastKey::NONE;
   uint16_t depth = 0;
-  char imageUrl[512] = "";
+  char imageUrl[kImageUrlMaxLen] = "";
   char filename[128] = "";
   uint32_t refreshRateSeconds = 0;
   bool imageUrlFound = false;

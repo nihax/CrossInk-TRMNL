@@ -18,7 +18,7 @@ struct JsonCallbacks {
 
 class StreamingJsonParser {
  public:
-  static constexpr size_t TOKEN_BUF_SIZE = 512;
+  static constexpr size_t TOKEN_BUF_SIZE = 1536;
   static constexpr size_t MAX_NESTING = 32;
 
   explicit StreamingJsonParser(const JsonCallbacks& callbacks);

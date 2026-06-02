@@ -18,6 +18,9 @@
 - Reduced Home menu heap churn and skipped Lyra Carousel frame caching when heap is low to avoid crash risk on memory-constrained builds.
 - Fixed Vietnamese settings labels showing replacement diamonds after one over-escaped translation shifted generated string offsets.
 - Fixed KOReader Sync applying chapter-start progress a few pages into the chapter instead of landing at the start.
+- Fixed TRMNL display JSON parsing so long AWS presigned `image_url` values are no longer truncated.
+- Fixed TRMNL sleep-screen downloads failing on valid presigned image payloads by raising TRMNL JSON/image size limits and improving fetch diagnostics.
+- Fixed a TRMNL parser memory regression on tiny builds by reducing parser stack pressure while keeping support for long signed image URLs.
 
 ## [v1.3.1] - 2026-05-28
 

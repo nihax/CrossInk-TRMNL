@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "lib/JsonParser/TrmnlDisplayJsonParser.h"
 #include "src/trmnl/TrmnlDisplayConfig.h"
@@ -126,6 +127,72 @@ void testMissingImageUrl() {
   PASS();
 }
 
+void testParsesLongAwsSignedImageUrl() {
+  printf("testParsesLongAwsSignedImageUrl...\n");
+
+  const char* json = R"({
+    "status": 0,
+    "image_url": "https://trmnl.s3.us-east-2.amazonaws.com/e7baly5hvjgcgtzw0aahmf9odf2f?response-content-disposition=inline%3B%20filename%3D%22plugin-ed55a0%22%3B%20filename%2A%3DUTF-8%27%27plugin-ed55a0&response-content-type=image%2Fpng&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA47CRUQUU4VKBBMOF%2F20260601%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260601T125142Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=292790db93913ce9ff24de70a6a94a4593a442dba489c6aa1895134b15580a3c",
+    "filename": "plugin-ed55a0-1780318191",
+    "refresh_rate": 289,
+    "reset_firmware": false,
+    "update_firmware": false,
+    "firmware_url": "https://trmnl-fw.s3.us-east-2.amazonaws.com/trmnl_og/FW1.8.5.bin",
+    "special_function": "restart_playlist"
+  })";
+
+  TrmnlDisplayJsonParser parser;
+  parser.feed(json, strlen(json));
+
+  ASSERT_FALSE(parser.hasError());
+  ASSERT_TRUE(parser.foundImageUrl());
+  ASSERT_STREQ(
+      parser.getImageUrl(),
+      "https://trmnl.s3.us-east-2.amazonaws.com/e7baly5hvjgcgtzw0aahmf9odf2f?response-content-disposition=inline%3B%20filename%3D%22plugin-ed55a0%22%3B%20filename%2A%3DUTF-8%27%27plugin-ed55a0&response-content-type=image%2Fpng&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIA47CRUQUU4VKBBMOF%2F20260601%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260601T125142Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=292790db93913ce9ff24de70a6a94a4593a442dba489c6aa1895134b15580a3c");
+  ASSERT_STREQ(parser.getFilename(), "plugin-ed55a0-1780318191");
+  ASSERT_EQ(parser.getRefreshRateSeconds(), 289u);
+
+  printf("  passed\n");
+  PASS();
+}
+
+void testParsesVeryLongImageUrlWithinParserLimit() {
+  printf("testParsesVeryLongImageUrlWithinParserLimit...\n");
+
+  std::string longUrl = "https://example.test/image.png?sig=";
+  longUrl.append(1200, 'a');
+  const std::string json = std::string("{\"image_url\":\"") + longUrl + "\",\"filename\":\"display.png\"}";
+
+  TrmnlDisplayJsonParser parser;
+  parser.feed(json.c_str(), json.size());
+
+  ASSERT_FALSE(parser.hasError());
+  ASSERT_TRUE(parser.foundImageUrl());
+  ASSERT_STREQ(parser.getImageUrl(), longUrl.c_str());
+  ASSERT_STREQ(parser.getFilename(), "display.png");
+
+  printf("  passed\n");
+  PASS();
+}
+
+void testDecodesJsonUnicodeEscapesInImageUrl() {
+  printf("testDecodesJsonUnicodeEscapesInImageUrl...\n");
+
+  const char* json =
+      R"({"image_url":"https://example.test/render.png?x=1\u0026y=2\u0026z=ok","filename":"render.bmp"})";
+
+  TrmnlDisplayJsonParser parser;
+  parser.feed(json, strlen(json));
+
+  ASSERT_FALSE(parser.hasError());
+  ASSERT_TRUE(parser.foundImageUrl());
+  ASSERT_STREQ(parser.getImageUrl(), "https://example.test/render.png?x=1&y=2&z=ok");
+  ASSERT_STREQ(parser.getFilename(), "render.bmp");
+
+  printf("  passed\n");
+  PASS();
+}
+
 void testDisplaySizeForOrientation() {
   printf("testDisplaySizeForOrientation...\n");
 
@@ -136,7 +203,7 @@ void testDisplaySizeForOrientation() {
   ASSERT_EQ(landscape.height, 480);
   ASSERT_EQ(portrait.width, 480);
   ASSERT_EQ(portrait.height, 800);
-  ASSERT_STREQ(trmnl::modelFor(trmnl::Orientation::Landscape), "og_png");
+  ASSERT_STREQ(trmnl::modelFor(trmnl::Orientation::Landscape), "og");
 
   printf("  passed\n");
   PASS();
@@ -147,6 +214,9 @@ int main() {
   testParsesChunkedMinifiedResponse();
   testIgnoresNestedImageUrl();
   testMissingImageUrl();
+  testParsesLongAwsSignedImageUrl();
+  testParsesVeryLongImageUrlWithinParserLimit();
+  testDecodesJsonUnicodeEscapesInImageUrl();
   testDisplaySizeForOrientation();
 
   printf("\n%d passed, %d failed\n", testsPassed, testsFailed);

@@ -6,6 +6,7 @@
 #include <TrmnlDisplayJsonParser.h>
 #include <WiFi.h>
 
+#include <cstdarg>
 #include <cstdio>
 
 #include "WifiCredentialStore.h"
@@ -13,6 +14,38 @@
 #include "util/UrlUtils.h"
 
 namespace {
+constexpr const char* TRMNL_CRASH_REPORT_PATH = "/.crosspoint/crash_report.txt";
+
+void appendCrashReportLine(const char* line) {
+  FsFile report = Storage.open(TRMNL_CRASH_REPORT_PATH, O_WRONLY | O_CREAT | O_APPEND);
+  if (!report) {
+    return;
+  }
+  report.write(reinterpret_cast<const uint8_t*>(line), strlen(line));
+  report.write(reinterpret_cast<const uint8_t*>("\n"), 1);
+  report.flush();
+  report.close();
+}
+
+void trmnlDiag(const char* fmt, ...) {
+  char message[256];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(message, sizeof(message), fmt, args);
+  va_end(args);
+
+  char line[320];
+  snprintf(line, sizeof(line), "[%lu] [TRM] %s", static_cast<unsigned long>(millis()), message);
+  appendCrashReportLine(line);
+}
+
+TrmnlDisplayJsonParser& trmnlDisplayParser() {
+  // Keep parser storage off the call stack; this path runs in constrained contexts.
+  static TrmnlDisplayJsonParser parser;
+  parser.reset();
+  return parser;
+}
+
 const WifiCredential* getTrmnlWifiCredential() {
   const std::string& lastSsid = WIFI_STORE.getLastConnectedSsid();
   if (!lastSsid.empty()) {
@@ -136,16 +169,22 @@ bool TrmnlSleepClient::replaceCache(const std::string& tmpPath, const ImageKind 
 }
 
 bool TrmnlSleepClient::fetchLatest(const Config& config) {
+  Storage.mkdir("/.crosspoint");
+  trmnlDiag("fetchLatest start server=%s hasKey=%d hasDeviceId=%d", config.serverUrl ? config.serverUrl : "(null)",
+            (config.apiKey && config.apiKey[0] != '\0') ? 1 : 0, (config.deviceId && config.deviceId[0] != '\0') ? 1 : 0);
+
   if (!hasConfig(config)) {
     LOG_DBG("TRM", "TRMNL settings incomplete");
+    trmnlDiag("settings incomplete");
     return false;
   }
 
-  Storage.mkdir("/.crosspoint");
   if (!connectWifi()) {
+    trmnlDiag("wifi connect failed");
     disconnectWifi();
     return false;
   }
+  trmnlDiag("wifi connected ip=%s", WiFi.localIP().toString().c_str());
 
   const std::string deviceId = resolveDeviceId(config.deviceId);
   char widthHeader[8];
@@ -156,39 +195,70 @@ bool TrmnlSleepClient::fetchLatest(const Config& config) {
                                             {"Access-Token", config.apiKey},
                                             {"Width", widthHeader},
                                             {"Height", heightHeader},
-                                            {"Model", config.model ? config.model : "og_png"}};
+                                            {"Model", config.model ? config.model : "og"}};
   const std::string serverUrl = UrlUtils::ensureProtocol(config.serverUrl);
   const std::string displayUrl = UrlUtils::buildUrl(serverUrl, "/api/display");
+  trmnlDiag("display url=%s", displayUrl.c_str());
 
   std::string response;
   bool fetched = HttpDownloader::fetchUrl(displayUrl, response, "", "", headers, sizeof(headers) / sizeof(headers[0]),
                                           DISPLAY_JSON_MAX_BYTES);
+  trmnlDiag("display fetch result=%d bytes=%u", fetched ? 1 : 0, static_cast<unsigned>(response.size()));
+  if (!fetched) {
+    LOG_ERR("TRM", "Display JSON fetch failed (url=%s, maxBytes=%u)", displayUrl.c_str(),
+            static_cast<unsigned>(DISPLAY_JSON_MAX_BYTES));
+    trmnlDiag("display fetch failed maxBytes=%u", static_cast<unsigned>(DISPLAY_JSON_MAX_BYTES));
+  }
   if (fetched) {
-    TrmnlDisplayJsonParser parser;
+    TrmnlDisplayJsonParser& parser = trmnlDisplayParser();
     parser.feed(response.c_str(), response.length());
     fetched = !parser.hasError() && parser.foundImageUrl();
+    trmnlDiag("display parse result=%d parseErr=%d foundImageUrl=%d", fetched ? 1 : 0, parser.hasError() ? 1 : 0,
+              parser.foundImageUrl() ? 1 : 0);
+    if (!fetched) {
+      LOG_ERR("TRM", "Display JSON parse failed (parseErr=%d, imageUrlFound=%d)",
+              parser.hasError() ? 1 : 0, parser.foundImageUrl() ? 1 : 0);
+    }
     if (fetched) {
       const std::string imageUrl = UrlUtils::buildUrl(serverUrl, parser.getImageUrl());
       const bool sameHost = UrlUtils::extractHost(imageUrl) == UrlUtils::extractHost(serverUrl);
+      trmnlDiag("image url len=%u sameHost=%d", static_cast<unsigned>(imageUrl.size()), sameHost ? 1 : 0);
       const HttpDownloader::Header* imageHeaders = sameHost ? headers : nullptr;
       const size_t imageHeaderCount = sameHost ? sizeof(headers) / sizeof(headers[0]) : 0;
       if (Storage.exists(CACHE_TMP)) {
         Storage.remove(CACHE_TMP);
       }
       const HttpDownloader::DownloadOptions options(false, false, nullptr, 1024, IMAGE_MAX_BYTES);
-      fetched = HttpDownloader::downloadToFile(imageUrl, CACHE_TMP, nullptr, nullptr, "", "", options, imageHeaders,
-                                               imageHeaderCount) == HttpDownloader::OK;
+      const HttpDownloader::DownloadError downloadError =
+          HttpDownloader::downloadToFile(imageUrl, CACHE_TMP, nullptr, nullptr, "", "", options, imageHeaders,
+                                         imageHeaderCount);
+      fetched = downloadError == HttpDownloader::OK;
+      trmnlDiag("image download result=%d err=%d", fetched ? 1 : 0, static_cast<int>(downloadError));
+      if (!fetched) {
+        LOG_ERR("TRM", "Image download failed (err=%d, maxBytes=%u, sameHost=%d, urlLen=%u)",
+                static_cast<int>(downloadError), static_cast<unsigned>(IMAGE_MAX_BYTES), sameHost ? 1 : 0,
+                static_cast<unsigned>(imageUrl.size()));
+        trmnlDiag("image download diagnostics httpCode=%d streamErr=%d", HttpDownloader::getLastHttpCode(),
+                  HttpDownloader::getLastStreamError());
+      }
       if (fetched) {
         ImageKind kind = ImageKind::Unknown;
         fetched = validateImage(CACHE_TMP, kind) && replaceCache(CACHE_TMP, kind);
+        trmnlDiag("image validate+cache result=%d kind=%d", fetched ? 1 : 0, static_cast<int>(kind));
+        if (!fetched) {
+          LOG_ERR("TRM", "Downloaded file was not a valid TRMNL sleep image");
+        }
       }
     }
   }
 
   disconnectWifi();
+  trmnlDiag("wifi disconnected fetched=%d", fetched ? 1 : 0);
   if (!fetched) {
     LOG_ERR("TRM", "TRMNL fetch failed");
     Storage.remove(CACHE_TMP);
+    trmnlDiag("fetch failed; removed tmp");
   }
+  trmnlDiag("fetchLatest end result=%d", fetched ? 1 : 0);
   return fetched;
 }

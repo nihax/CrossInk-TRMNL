@@ -9,6 +9,44 @@ void safeCopy(char* dst, const size_t dstSize, const char* src, const size_t src
   memcpy(dst, src, n);
   dst[n] = '\0';
 }
+
+bool isHexDigit(const char c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+uint8_t hexValue(const char c) {
+  if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+  if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(10 + (c - 'a'));
+  return static_cast<uint8_t>(10 + (c - 'A'));
+}
+
+void decodeJsonUnicodeEscapesInPlace(char* text) {
+  size_t read = 0;
+  size_t write = 0;
+  while (text[read] != '\0') {
+    if (text[read] == '\\' && text[read + 1] == 'u' && isHexDigit(text[read + 2]) && isHexDigit(text[read + 3]) &&
+        isHexDigit(text[read + 4]) && isHexDigit(text[read + 5])) {
+      const uint16_t codepoint = static_cast<uint16_t>((hexValue(text[read + 2]) << 12) |
+                                                       (hexValue(text[read + 3]) << 8) |
+                                                       (hexValue(text[read + 4]) << 4) | hexValue(text[read + 5]));
+      if (codepoint <= 0x7F) {
+        text[write++] = static_cast<char>(codepoint);
+      } else {
+        // Keep non-ASCII codepoints in escaped form; URL path/query should remain ASCII.
+        text[write++] = text[read];
+        text[write++] = text[read + 1];
+        text[write++] = text[read + 2];
+        text[write++] = text[read + 3];
+        text[write++] = text[read + 4];
+        text[write++] = text[read + 5];
+      }
+      read += 6;
+      continue;
+    }
+    text[write++] = text[read++];
+  }
+  text[write] = '\0';
+}
 }  // namespace
 
 TrmnlDisplayJsonParser::TrmnlDisplayJsonParser()
@@ -55,6 +93,7 @@ void TrmnlDisplayJsonParser::sOnString(void* ctx, const char* value, const size_
   auto* self = static_cast<TrmnlDisplayJsonParser*>(ctx);
   if (self->depth == 1 && self->lastKey == LastKey::IMAGE_URL) {
     safeCopy(self->imageUrl, sizeof(self->imageUrl), value, len);
+    decodeJsonUnicodeEscapesInPlace(self->imageUrl);
     self->imageUrlFound = self->imageUrl[0] != '\0';
   } else if (self->depth == 1 && self->lastKey == LastKey::FILENAME) {
     safeCopy(self->filename, sizeof(self->filename), value, len);

@@ -15,6 +15,6 @@ constexpr DisplaySize displaySizeFor(const Orientation orientation) {
   return orientation == Orientation::Portrait ? DisplaySize{480, 800} : DisplaySize{800, 480};
 }
 
-constexpr const char* modelFor(const Orientation /*orientation*/) { return "og_png"; }
+constexpr const char* modelFor(const Orientation /*orientation*/) { return "og"; }
 
 }  // namespace trmnl

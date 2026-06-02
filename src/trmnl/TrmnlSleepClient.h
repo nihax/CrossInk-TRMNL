@@ -31,7 +31,8 @@ class TrmnlSleepClient {
   static constexpr const char* CACHE_TMP = "/.crosspoint/trmnl_sleep.tmp";
   static constexpr uint8_t WIFI_RETRIES = 20;
   static constexpr uint16_t WIFI_RETRY_DELAY_MS = 500;
-  static constexpr size_t DISPLAY_JSON_MAX_BYTES = 4096;
+  // Allow larger TRMNL payloads that include long presigned URL query strings.
+  static constexpr size_t DISPLAY_JSON_MAX_BYTES = 8 * 1024;
   static constexpr size_t IMAGE_MAX_BYTES = 256 * 1024;
 
   static bool connectWifi();
