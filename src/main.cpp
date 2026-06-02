@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
+#include <SdCardFont.h>
 #include <FontDecompressor.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -83,6 +84,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "simulator/SimulatorSmokeTest.h"
 #endif
 #include "images/LoadingIcon.h"
+#include "trmnl/TrmnlHeap.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -1062,3 +1064,17 @@ void loop() {
     }
   }
 }
+
+namespace TrmnlHeap {
+
+void releaseTransientMemory() {
+  renderer.releaseScratchMemoryForLowHeap();
+  fontCacheManager.clearCache();
+  for (const auto& entry : renderer.getSdCardFonts()) {
+    if (entry.second != nullptr) {
+      entry.second->releaseForLowMemory();
+    }
+  }
+}
+
+}  // namespace TrmnlHeap

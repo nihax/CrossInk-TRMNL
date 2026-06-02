@@ -7,6 +7,7 @@
 - Added TRMNL as a sleep-screen wallpaper source with configurable server, API key, device ID, and orientation.
 
 ### Changed
+- TRMNL sleep images are pre-baked to `trmnl_sleep.bmp` at fetch time and drawn with the same bitmap sleep renderer used for book covers, avoiding PNG decode during sleep.
 - Moved EPUB silent next-chapter indexing to the second-to-last page so short final pages are less likely to expose visible indexing.
 - Added EPUB silent next-chapter indexing diagnostics to show trigger timing, existing caches, and low-memory skips.
 
@@ -21,6 +22,7 @@
 - Fixed TRMNL display JSON parsing so long AWS presigned `image_url` values are no longer truncated.
 - Fixed TRMNL sleep-screen downloads failing on valid presigned image payloads by raising TRMNL JSON/image size limits and improving fetch diagnostics.
 - Fixed a TRMNL parser memory regression on tiny builds by reducing parser stack pressure while keeping support for long signed image URLs.
+- Fixed TRMNL PNG-to-BMP conversion failing after download by tearing down Wi-Fi and releasing font caches before pre-bake, and by using the correct heap budget for the uzlib-based PNG converter (not PNGdec).
 
 ## [v1.3.1] - 2026-05-28
 

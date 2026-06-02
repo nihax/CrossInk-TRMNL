@@ -599,17 +599,23 @@ bool SleepActivity::renderPngSleepScreen(const std::string& path) const {
 }
 
 bool SleepActivity::renderTrmnlCachedImage() const {
-  if (renderPngSleepScreen(TrmnlSleepClient::CACHE_PNG)) return true;
-  FsFile file;
-  if (Storage.openFileForRead("TRM", TrmnlSleepClient::CACHE_BMP, file)) {
-    Bitmap bitmap(file, true);
-    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-      renderBitmapSleepScreen(bitmap);
-      file.close();
-      return true;
-    }
-    file.close();
+  if (!Storage.exists(TrmnlSleepClient::CACHE_BMP)) {
+    return false;
   }
+  FsFile file;
+  if (!Storage.openFileForRead("TRM", TrmnlSleepClient::CACHE_BMP, file)) {
+    return false;
+  }
+  Bitmap bitmap(file);
+  const BmpReaderError parseResult = bitmap.parseHeaders();
+  if (parseResult == BmpReaderError::Ok) {
+    LOG_DBG("SLP", "Rendering TRMNL sleep BMP: %s", TrmnlSleepClient::CACHE_BMP);
+    renderBitmapSleepScreen(bitmap);
+    file.close();
+    return true;
+  }
+  LOG_ERR("SLP", "TRMNL cached BMP parse failed: %s", Bitmap::errorToString(parseResult));
+  file.close();
   return false;
 }
 
@@ -622,10 +628,19 @@ void SleepActivity::renderTrmnlSleepScreen() const {
                               : GfxRenderer::Orientation::LandscapeCounterClockwise);
   const TrmnlSleepClient::Config config{SETTINGS.trmnlServerUrl, SETTINGS.trmnlApiKey, SETTINGS.trmnlDeviceId,
                                         trmnl::displaySizeFor(trmnlOrientation), trmnl::modelFor(trmnlOrientation)};
-  TrmnlSleepClient::fetchLatest(config);
-  if (!renderTrmnlCachedImage()) {
-    renderDefaultSleepScreen();
+
+  // Same pattern as cover sleep: paint the cached BMP before network work.
+  if (renderTrmnlCachedImage()) {
+    TrmnlSleepClient::fetchLatest(config);
+    return;
   }
+
+  if (TrmnlSleepClient::fetchLatest(config) && renderTrmnlCachedImage()) {
+    return;
+  }
+
+  LOG_ERR("SLP", "TRMNL sleep image unavailable after fetch");
+  renderDefaultSleepScreen();
 }
 
 void SleepActivity::renderCoverSleepScreen() const {

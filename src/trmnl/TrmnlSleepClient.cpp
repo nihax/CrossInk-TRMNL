@@ -1,8 +1,11 @@
 #include "TrmnlSleepClient.h"
 
+#include "TrmnlHeap.h"
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <MemoryBudget.h>
+#include <PngToBmpConverter.h>
 #include <TrmnlDisplayJsonParser.h>
 #include <WiFi.h>
 
@@ -15,6 +18,9 @@
 
 namespace {
 constexpr const char* TRMNL_CRASH_REPORT_PATH = "/.crosspoint/crash_report.txt";
+// PngToBmpConverter uses uzlib/InflateReader (~32 KB dictionary), not PNGdec (~44 KB).
+constexpr uint32_t TRMNL_PNG_CONVERT_MIN_FREE = 48U * 1024U;
+constexpr uint32_t TRMNL_PNG_CONVERT_MIN_MAX_ALLOC = 32U * 1024U;
 
 void appendCrashReportLine(const char* line) {
   FsFile report = Storage.open(TRMNL_CRASH_REPORT_PATH, O_WRONLY | O_CREAT | O_APPEND);
@@ -148,6 +154,85 @@ const char* TrmnlSleepClient::cachePathFor(const ImageKind kind) {
   return nullptr;
 }
 
+void TrmnlSleepClient::prepareHeapForImageFinalize() {
+  disconnectWifi();
+  TrmnlHeap::releaseTransientMemory();
+  delay(50);
+  const auto heap = MemoryBudget::snapshot();
+  trmnlDiag("heap after prep free=%u max=%u", heap.freeHeap, heap.maxAllocHeap);
+}
+
+bool TrmnlSleepClient::convertPngToCachedBmp(const std::string& pngPath, const int targetWidth,
+                                             const int targetHeight) {
+  const auto heap = MemoryBudget::snapshot();
+  if (!MemoryBudget::hasHeap(heap, TRMNL_PNG_CONVERT_MIN_FREE, TRMNL_PNG_CONVERT_MIN_MAX_ALLOC)) {
+    LOG_ERR("TRM", "Not enough heap for TRMNL PNG convert (%u free, %u max alloc, need %u/%u)", heap.freeHeap,
+            heap.maxAllocHeap, TRMNL_PNG_CONVERT_MIN_FREE, TRMNL_PNG_CONVERT_MIN_MAX_ALLOC);
+    trmnlDiag("png to bmp: low heap free=%u max=%u", heap.freeHeap, heap.maxAllocHeap);
+    return false;
+  }
+  trmnlDiag("png to bmp start free=%u max=%u", heap.freeHeap, heap.maxAllocHeap);
+
+  FsFile pngFile;
+  if (!Storage.openFileForRead("TRM", pngPath.c_str(), pngFile)) {
+    LOG_ERR("TRM", "Failed to open TRMNL PNG for BMP conversion");
+    return false;
+  }
+
+  if (Storage.exists(CACHE_BMP) && !Storage.remove(CACHE_BMP)) {
+    pngFile.close();
+    return false;
+  }
+
+  FsFile bmpFile;
+  if (!Storage.openFileForWrite("TRM", CACHE_BMP, bmpFile)) {
+    LOG_ERR("TRM", "Failed to open TRMNL BMP cache for writing");
+    pngFile.close();
+    return false;
+  }
+
+  const bool converted =
+      PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(pngFile, bmpFile, targetWidth, targetHeight, false);
+  pngFile.close();
+  bmpFile.close();
+
+  if (!converted || !validateBmpFile(CACHE_BMP)) {
+    LOG_ERR("TRM", "TRMNL PNG to 1-bit BMP conversion failed");
+    trmnlDiag("png to bmp: conversion failed");
+    Storage.remove(CACHE_BMP);
+    return false;
+  }
+
+  if (Storage.exists(CACHE_PNG)) {
+    Storage.remove(CACHE_PNG);
+  }
+  trmnlDiag("png to bmp: ok %dx%d", targetWidth, targetHeight);
+  return true;
+}
+
+bool TrmnlSleepClient::finalizeDownloadedImage(const std::string& tmpPath, const Config& config) {
+  ImageKind kind = ImageKind::Unknown;
+  if (!validateImage(tmpPath, kind)) {
+    return false;
+  }
+
+  if (kind == ImageKind::Png) {
+    const bool converted = convertPngToCachedBmp(tmpPath, config.displaySize.width, config.displaySize.height);
+    Storage.remove(tmpPath.c_str());
+    return converted;
+  }
+
+  if (kind == ImageKind::Bmp) {
+    const bool cached = replaceCache(tmpPath, ImageKind::Bmp);
+    if (cached && Storage.exists(CACHE_PNG)) {
+      Storage.remove(CACHE_PNG);
+    }
+    return cached;
+  }
+
+  return false;
+}
+
 bool TrmnlSleepClient::replaceCache(const std::string& tmpPath, const ImageKind kind) {
   const char* destPath = cachePathFor(kind);
   if (!destPath) {
@@ -242,9 +327,11 @@ bool TrmnlSleepClient::fetchLatest(const Config& config) {
                   HttpDownloader::getLastStreamError());
       }
       if (fetched) {
-        ImageKind kind = ImageKind::Unknown;
-        fetched = validateImage(CACHE_TMP, kind) && replaceCache(CACHE_TMP, kind);
-        trmnlDiag("image validate+cache result=%d kind=%d", fetched ? 1 : 0, static_cast<int>(kind));
+        response.clear();
+        response.shrink_to_fit();
+        prepareHeapForImageFinalize();
+        fetched = finalizeDownloadedImage(CACHE_TMP, config);
+        trmnlDiag("image finalize+cache result=%d", fetched ? 1 : 0);
         if (!fetched) {
           LOG_ERR("TRM", "Downloaded file was not a valid TRMNL sleep image");
         }

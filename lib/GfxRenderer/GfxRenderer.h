@@ -121,6 +121,9 @@ class GfxRenderer {
   static constexpr int VIEWABLE_MARGIN_LEFT = 3;
 
   // Setup
+  // Frees bitmap decode scratch buffers so large one-off work (e.g. TRMNL fetch) can allocate.
+  void releaseScratchMemoryForLowHeap() { freeBitmapScratchBuffers(); }
+
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
   // Clears both the flash-font map and any SD-font registration for fontId.

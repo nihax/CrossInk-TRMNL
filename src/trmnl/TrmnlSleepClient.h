@@ -18,7 +18,9 @@ class TrmnlSleepClient {
     const char* model;
   };
 
+  // Pre-baked at fetch time; sleep display reads this via renderBitmapSleepScreen().
   static constexpr const char* CACHE_BMP = "/.crosspoint/trmnl_sleep.bmp";
+  // Legacy; no longer written by fetchLatest.
   static constexpr const char* CACHE_PNG = "/.crosspoint/trmnl_sleep.png";
 
   static bool hasConfig(const Config& config);
@@ -39,4 +41,7 @@ class TrmnlSleepClient {
   static void disconnectWifi();
   static std::string resolveDeviceId(const char* configuredDeviceId);
   static bool replaceCache(const std::string& tmpPath, ImageKind kind);
+  static bool finalizeDownloadedImage(const std::string& tmpPath, const Config& config);
+  static bool convertPngToCachedBmp(const std::string& pngPath, int targetWidth, int targetHeight);
+  static void prepareHeapForImageFinalize();
 };
